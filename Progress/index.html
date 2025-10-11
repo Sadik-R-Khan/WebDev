@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Progress Journal (Simplified)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&display=swap" rel="stylesheet">
+    
+    <script type="module">
+        
+        // --- Configuration and State ---
+        
+        const LOCAL_STORAGE_KEY = 'progressJournalData';
+        
+        const USER_TYPES = {
+            SADIK: 'sadik_khan',
+            SAAD: 'saad_shaikh'
+        };
+
+        // Application State
+        window.journalData = {};
+        window.currentUserType = USER_TYPES.SADIK; // Default to Sadik Khan
+        window.todayDateStr = formatDate(new Date());
+
+        // --- Persistence (Local Storage) Functions ---
+
+        /**
+         * Loads data from localStorage, or returns default structure if none found.
+         */
+        function loadDataFromLocal() {
+            try {
+                const data = localStorage.getItem(LOCAL_STORAGE_KEY);
+                if (data) {
+                    return JSON.parse(data);
+                }
+            } catch (e) {
+                console.error("Error loading data from localStorage:", e);
+            }
+            // Default structure
+            return {
+                [USER_TYPES.SADIK]: {},
+                [USER_TYPES.SAAD]: {}
+            };
+        }
+
+        /**
+         * Saves the current journal data state to localStorage.
+         */
+        function saveDataToLocal() {
+            try {
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(window.journalData));
+                console.log("Data saved to localStorage.");
+            } catch (e) {
+                console.error("Error saving data to localStorage:", e);
+            }
+        }
+
+
+        // --- Utility Functions ---
+
+        /**
+         * Formats a Date object into YYYY-MM-DD string for internal keys.
+         */
+        function formatDate(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+        
+        /**
+         * Formats a YYYY-MM-DD string into a human-readable date header.
+         */
+        function formatHeader(dateStr) {
+            // Note: Adding 'T00:00:00' prevents timezone issues on date parsing
+            const date = new Date(dateStr + 'T00:00:00'); 
+            const options = { year: 'numeric', month: 'long', day: 'numeric' };
+            const humanDate = date.toLocaleDateString('en-US', options);
+            return `📅 ${humanDate}`;
+        }
+        
+        /**
+         * Determines which data key is the current user (My Progress) and which is the partner (Friend's Progress).
+         */
+        function getColumnKeys() {
+            if (window.currentUserType === USER_TYPES.SADIK) {
+                return { myKey: USER_TYPES.SADIK, friendKey: USER_TYPES.SAAD };
+            }
+            return { myKey: USER_TYPES.SAAD, friendKey: USER_TYPES.SADIK };
+        }
+
+        // --- UI State and Rendering ---
+        
+        /**
+         * Updates the UI based on the fetched data and current user selection.
+         */
+        function updateUI() {
+            const { myKey, friendKey } = getColumnKeys();
+            
+            // Update column headers
+            document.querySelector('.my-col .header').textContent = `My Progress (${myKey.replace('_', ' ').toUpperCase()})`;
+            document.querySelector('.friend-col .header').textContent = `Friend's Progress (${friendKey.replace('_', ' ').toUpperCase()})`;
+
+            // Re-render both columns
+            renderProgress('myProgress', myKey);
+            renderProgress('friendProgress', friendKey);
+        }
+
+        /**
+         * Handles the user selection from the dropdown.
+         */
+        window.setUserType = function(selectElement) {
+            window.currentUserType = selectElement.value;
+            updateUI();
+        }
+
+        // --- Core Application Logic (CRUD) ---
+
+        /**
+         * Renders all progress entries for a given column key.
+         */
+        function renderProgress(uiKey, dataKey, filterText = '') {
+            const displayElement = document.getElementById(uiKey + 'Display');
+            if (!displayElement) return;
+
+            displayElement.innerHTML = '';
+            // Get entries for the specific data key (sadik_khan or saad_shaikh)
+            const progress = window.journalData[dataKey] || {}; 
+            const dateKeys = Object.keys(progress).sort().reverse(); 
+            const filterLower = filterText.toLowerCase();
+
+            dateKeys.forEach(dateStr => {
+                let entries = progress[dateStr] || [];
+
+                // Sort entries by timestamp ascending (oldest first)
+                entries.sort((a, b) => a.timestamp - b.timestamp);
+
+                const filteredEntries = filterText 
+                    ? entries.filter(entry => entry.text && entry.text.toLowerCase().includes(filterLower))
+                    : entries;
+                
+                if (filteredEntries.length === 0 && filterText) return; 
+                
+                const groupDiv = document.createElement('div');
+                groupDiv.className = 'entry-group';
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'entry-group-header text-lg';
+                headerDiv.innerHTML = formatHeader(dateStr);
+                groupDiv.appendChild(headerDiv);
+
+                // Editing/Deleting is only allowed for the 'myProgress' UI column on TODAY's date
+                const isToday = dateStr === window.todayDateStr;
+                const canEditOrDelete = isToday && uiKey === 'myProgress'; 
+                
+                filteredEntries.forEach((entry) => {
+                    // Use entry.timestamp as a unique identifier for CRUD operations
+                    const entryId = `${uiKey}-${dateStr}-${entry.timestamp || Date.now()}`; 
+                    
+                    const entryContainer = document.createElement('div');
+                    entryContainer.className = 'flex items-center justify-between entry-item-container';
+
+                    const entryDiv = document.createElement('div');
+                    entryDiv.id = entryId; 
+                    entryDiv.className = `entry-item flex-grow ${canEditOrDelete ? 'editable' : 'read-only'}`;
+                    entryDiv.textContent = entry.text || ''; 
+                    
+                    entryContainer.appendChild(entryDiv);
+
+                    if (canEditOrDelete) { 
+                        // Delete Button (visible only for today's 'My Progress' entries)
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = `text-red-500 hover:text-red-700 p-1 rounded-full ml-2 transition-colors`;
+                        deleteBtn.title = "Remove today's entry";
+                        deleteBtn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011 1v6a1 1 0 11-2 0V9a1 1 0 011-1zm7 1a1 1 0 00-2 0v6a1 1 0 102 0V9z" clip-rule="evenodd" />
+                            </svg>
+                        `;
+                        deleteBtn.onclick = () => removeEntry(dataKey, entry);
+                        entryContainer.appendChild(deleteBtn);
+                        
+                        // Enable in-place editing
+                        entryDiv.addEventListener('click', () => startEdit(dataKey, entry));
+                    }
+                    
+                    groupDiv.appendChild(entryContainer);
+                });
+
+                displayElement.appendChild(groupDiv);
+            });
+
+            if (dateKeys.length === 0) {
+                displayElement.innerHTML = `<p class="text-center text-gray-500 italic mt-4">${uiKey === 'myProgress' ? 'Log your progress to see entries here.' : 'No entries yet.'}</p>`;
+            }
+        }
+        window.renderProgress = renderProgress; // Expose for search
+
+        /**
+         * Starts in-place editing for a single entry.
+         */
+        function startEdit(dataKey, entry) {
+            const today = window.todayDateStr;
+            // Only allow editing if the entry is from today
+            if (formatDate(new Date(entry.timestamp)) !== today) return; 
+
+            const entryDiv = document.getElementById(`myProgress-${today}-${entry.timestamp}`);
+            if (!entryDiv) return;
+
+            const originalText = entryDiv.textContent;
+            
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = originalText;
+            input.className = 'w-full';
+
+            entryDiv.textContent = '';
+            entryDiv.appendChild(input);
+            input.focus();
+
+            const finishEdit = (isCancelled = false) => {
+                if (isCancelled || input.value === originalText) {
+                    entryDiv.textContent = originalText;
+                    return;
+                }
+
+                const newText = input.value.trim();
+                if (newText) {
+                    updateEntry(dataKey, entry, newText);
+                } else {
+                    entryDiv.textContent = originalText;
+                }
+            };
+
+            input.addEventListener('blur', () => finishEdit());
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    finishEdit();
+                } else if (e.key === 'Escape') {
+                    finishEdit(true); 
+                }
+            });
+        }
+
+        /**
+         * Adds a new progress entry to local storage.
+         */
+        function addEntry() {
+            const inputElement = document.getElementById('myEntryInput');
+            const entryText = inputElement.value.trim();
+
+            if (!entryText) return;
+
+            const { myKey } = getColumnKeys();
+            const today = window.todayDateStr;
+            const newEntry = { text: entryText, timestamp: Date.now() };
+            
+            // Ensure the date array exists for the current user
+            if (!window.journalData[myKey][today]) {
+                window.journalData[myKey][today] = [];
+            }
+            
+            // Add the new entry
+            window.journalData[myKey][today].push(newEntry);
+
+            saveDataToLocal();
+            updateUI();
+            inputElement.value = ''; // Clear input
+        }
+        window.addEntry = addEntry;
+
+        /**
+         * Updates an existing entry in local storage.
+         */
+        function updateEntry(dataKey, oldEntry, newText) {
+            const today = window.todayDateStr;
+            const entries = window.journalData[dataKey][today];
+            
+            if (!entries) return;
+
+            // Find the entry by its timestamp (unique ID) and update it
+            const index = entries.findIndex(e => e.timestamp === oldEntry.timestamp);
+            
+            if (index !== -1) {
+                entries[index].text = newText;
+            }
+
+            saveDataToLocal();
+            updateUI();
+        }
+        
+        /**
+         * Removes an entry from local storage.
+         */
+        function removeEntry(dataKey, entry) {
+            const today = window.todayDateStr;
+            
+            // Critical: Ensure the entry is from today before attempting deletion
+            if (formatDate(new Date(entry.timestamp)) !== today) {
+                console.warn("Attempted to delete a non-current-day entry. Blocked.");
+                return;
+            }
+
+            // Use custom confirm logic to avoid alert/confirm modal issues in the sandbox
+            if (!window.customConfirm("Are you sure you want to delete this entry?")) {
+                return;
+            }
+            
+            const entries = window.journalData[dataKey][today];
+            if (!entries) return;
+
+            // Find the index of the entry using its unique timestamp
+            const index = entries.findIndex(e => e.timestamp === entry.timestamp);
+
+            if (index !== -1) {
+                entries.splice(index, 1);
+            }
+
+            saveDataToLocal();
+            updateUI();
+        }
+        window.removeEntry = removeEntry;
+
+
+        // --- UI & Initialization ---
+
+        function updateDateTime() {
+            const now = new Date();
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
+            const timeStr = now.toLocaleTimeString('en-US', timeOptions);
+            const dateStr = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            
+            const dateTimeElement = document.getElementById('currentDateTime');
+            if (dateTimeElement) {
+                dateTimeElement.textContent = `${dateStr} | ${timeStr}`;
+            }
+
+            // Check if day has rolled over
+            const newTodayStr = formatDate(now);
+            if (newTodayStr !== window.todayDateStr) {
+                window.todayDateStr = newTodayStr;
+                // Re-render to update the delete button visibility
+                updateUI(); 
+            }
+        }
+
+        function handleSearch() {
+            const filterText = document.getElementById('searchInput').value;
+            const { myKey, friendKey } = getColumnKeys();
+            renderProgress('myProgress', myKey, filterText);
+            renderProgress('friendProgress', friendKey, filterText);
+        }
+
+        window.exportProgress = function() {
+            let exportText = "--- Collaborative Progress Journal Log ---\n\n";
+
+            const { myKey, friendKey } = getColumnKeys();
+
+            [
+                { key: myKey, title: `MY PROGRESS (${myKey.replace('_', ' ').toUpperCase()})` },
+                { key: friendKey, title: `FRIEND'S PROGRESS (${friendKey.replace('_', ' ').toUpperCase()})` }
+            ].forEach(item => {
+                exportText += `========================================\n${item.title}\n========================================\n\n`;
+
+                const progress = window.journalData[item.key] || {};
+                // Sort dates ascending for export
+                const dateKeys = Object.keys(progress).sort(); 
+
+                dateKeys.forEach(dateStr => {
+                    exportText += `${formatHeader(dateStr)}\n`;
+                    const entries = progress[dateStr] || [];
+                    // Sort entries by timestamp ascending for export
+                    entries.sort((a, b) => a.timestamp - b.timestamp).forEach((entry) => {
+                        exportText += `  - ${entry.text}\n`;
+                    });
+                    exportText += '\n';
+                });
+                exportText += '\n';
+            });
+
+            const blob = new Blob([exportText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Progress_Journal_Export_${formatDate(new Date())}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        /**
+         * Initializes the application.
+         */
+        function initApp() {
+            // Load data from localStorage (or use defaults)
+            window.journalData = loadDataFromLocal();
+            
+            // Show the content
+            document.getElementById('appContent').classList.remove('hidden');
+            updateUI();
+
+            // Set up search listener
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.addEventListener('input', handleSearch);
+            }
+        }
+
+        window.onload = () => {
+            setInterval(updateDateTime, 1000); 
+            initApp();
+        };
+        
+        // Custom confirm function to avoid alert/confirm modal issues in the sandbox
+        window.customConfirm = (message) => {
+             // In a real browser environment, you would use a custom modal here.
+             return confirm(message); 
+        };
+
+    </script>
+    <style>
+        /* Custom Styles for Notebook Aesthetic */
+        :root {
+            --bg-color: #fcfcf4; 
+            --border-color: #e0e0e0;
+            --header-color: #1e40af; 
+            --text-color: #333;
+            --notebook-line: #a0a0a0;
+            --shadow-color: rgba(0, 0, 0, 0.05);
+            --my-accent: #3b82f6; 
+            --friend-accent: #10b981; 
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9; 
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+        }
+        .journal-container {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 10px 30px var(--shadow-color);
+            border-radius: 12px;
+            padding: 1rem;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            flex-grow: 1;
+            background-image: repeating-linear-gradient(var(--bg-color), var(--bg-color) 24px, var(--notebook-line) 25px, var(--notebook-line) 26px);
+            background-size: 100% 26px;
+        }
+
+        .progress-col {
+            background-color: rgba(255, 255, 255, 0.5); 
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            transition: box-shadow 0.3s ease;
+        }
+        .my-col .header { color: var(--my-accent); }
+        .friend-col .header { color: var(--friend-accent); }
+
+        .entry-group {
+            margin-bottom: 1.5rem;
+            border-left: 3px solid var(--notebook-line);
+            padding-left: 1rem;
+        }
+        .entry-group-header {
+            font-family: 'Roboto Mono', monospace;
+            font-weight: 600;
+            color: var(--header-color);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+        }
+        
+        .entry-item-container {
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.25rem;
+            border-radius: 4px;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            line-height: 1.5;
+            word-wrap: break-word;
+            display: flex;
+            align-items: center;
+        }
+        
+        .entry-item {
+            cursor: default;
+        }
+
+        /* Editable Entry Styles */
+        .entry-item.editable {
+            cursor: pointer;
+        }
+        .entry-item.editable:hover {
+            background-color: #fff8e1; 
+        }
+        .entry-item.editable input {
+            width: 100%;
+            border: 1px solid var(--my-accent);
+            padding: 0.25rem;
+            border-radius: 4px;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Read-Only Entry Styles */
+        .entry-item.read-only {
+            color: #6b7280; 
+            background-color: #f9f9f9;
+        }
+
+        /* Input & Button Styles */
+        input[type="text"], textarea, select {
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 0.5rem;
+            transition: border-color 0.2s ease;
+        }
+        input[type="text"]:focus, textarea:focus, select:focus {
+            border-color: var(--my-accent);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: background-color 0.2s, transform 0.1s, box-shadow 0.2s;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+        }
+        .btn-my { background-color: var(--my-accent); color: white; }
+        .btn-my:hover { background-color: #2563eb; }
+        .btn-utility { background-color: #6b7280; color: white; }
+        .btn-utility:hover { background-color: #4b5563; }
+        
+        /* Responsive Layout */
+        @media (max-width: 1023px) {
+            .progress-col {
+                margin-bottom: 1.5rem;
+            }
+        }
+        
+    </style>
+</head>
+<body class="p-4 lg:p-8">
+
+    <!-- Global Header -->
+    <header class="text-center mb-6">
+        <h1 class="text-3xl font-extrabold text-gray-800">Collaborative Progress Journal</h1>
+        <div id="currentDateTime" class="text-lg font-mono text-gray-500 mt-1"></div>
+    </header>
+
+    <!-- Main Application Content (Hidden until initialized) -->
+    <div id="appContent" class="hidden">
+        
+        <!-- Utility Bar -->
+        <div class="journal-container mb-6 p-4 flex flex-col lg:flex-row justify-between items-center space-y-4 lg:space-y-0 lg:space-x-4 border-t-4 border-b-4 border-gray-300">
+            
+            <!-- User Selector -->
+            <div class="w-full lg:w-1/3 flex flex-col space-y-2">
+                <label for="userSelector" class="text-sm font-medium text-gray-700">Who is using the journal?</label>
+                <select id="userSelector" onchange="setUserType(this)" class="p-2 border-gray-300 w-full">
+                    <option value="sadik_khan" selected>Sadik Khan</option>
+                    <option value="saad_shaikh">Saad Shaikh</option>
+                </select>
+            </div>
+
+            <!-- Search -->
+            <div class="w-full lg:w-1/3">
+                <input type="text" id="searchInput" oninput="handleSearch()" placeholder="🔍 Filter entries by keyword..." class="w-full text-sm">
+            </div>
+
+            <!-- Export Button -->
+            <div class="w-full lg:w-1/3 flex justify-end">
+                <button onclick="exportProgress()" class="btn btn-utility flex items-center text-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L10 11.586l2.293-2.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v7a1 1 0 11-2 0V3a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                    Export All Progress
+                </button>
+            </div>
+        </div>
+
+
+        <!-- Main Journal Content -->
+        <main class="journal-container grid lg:grid-cols-2 gap-8">
+            
+            <!-- My Progress Column (Editable) -->
+            <section class="progress-col my-col">
+                <h2 class="text-2xl font-bold header mb-4">My Progress (Sadik Khan)</h2>
+                
+                <!-- Input Area -->
+                <div id="myInputArea" class="mb-6 p-4 bg-white rounded-lg shadow-md border-t-4 border-my-accent">
+                    <textarea id="myEntryInput" rows="3" placeholder="What did you achieve today? (Editable by the selected user)" class="w-full mb-2"></textarea>
+                    <button onclick="addEntry()" class="btn btn-my w-full">Add Entry</button>
+                </div>
+                
+                <!-- Display Area -->
+                <div id="myProgressDisplay" class="progress-display">
+                    <!-- Entries will be loaded here from local storage -->
+                    <p class="text-center text-gray-500 italic mt-4">Loading data...</p>
+                </div>
+            </section>
+
+            <!-- Friend's Progress Column (Read-only) -->
+            <section class="progress-col friend-col">
+                <h2 class="text-2xl font-bold header mb-4">Friend's Progress (Saad Shaikh)</h2>
+                
+                <!-- Display Area -->
+                <div id="friendProgressDisplay" class="progress-display">
+                    <!-- Entries will be loaded here from local storage -->
+                    <p class="text-center text-gray-500 italic mt-4">Loading data...</p>
+                </div>
+            </section>
+
+        </main>
+    </div>
+</body>
+</html>
